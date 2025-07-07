@@ -1,55 +1,61 @@
 name: Publish Docker image
-on:
-  release:
-    types: [published]
 permissions:
   contents: read
   packages: write
+on:
+  release:
+    types: [published]
+
 jobs:
-  push_to_registry:
-    name: Push Docker image to GitHub Packages
+  build_and_push:
+    name: Build & Push Multi-Arch
     runs-on: ubuntu-latest
     steps:
-      - name: Install QEMU
-        uses: docker/setup-qemu-action@v1
-      - name: Install Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v1
-      - name: Check out the repo
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           lfs: true
-      - name: Checkout LFS objects
-        run: git lfs checkout
-      - name: Login to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v1
+      - uses: docker/setup-qemu-action@v2
+      - id: buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          install: true
+          buildkitd-flags: --debug
+      - run: |
+          docker buildx inspect multiarch || docker buildx create --name multiarch --use
+          docker buildx inspect --bootstrap
+      - uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v3
+      - uses: actions/cache@v3
         with:
-          # list of Docker images to use as base name for tags
-          images: ghcr.io/aluvare/ubuntu24-vnc/ubuntu24-vnc
+          path: /tmp/.buildx-cache
+          key: buildx-cache-${{ runner.os }}-${{ github.ref }}-${{ hashFiles('base/Dockerfile') }}
+          restore-keys: |
+            buildx-cache-${{ runner.os }}-${{ github.ref }}-
+      - id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ghcr.io/${{ github.repository }}
           tag-sha: true
-          # Docker tags based on the following events/attributes
           tags: |
-            type=schedule
-            type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
-      - name: Push to GitHub Packages
-        uses: docker/build-push-action@v2
+      - uses: docker/build-push-action@v3
         with:
+          builder: multiarch
+          context: .
           file: base/Dockerfile
-          context: base/
-          platforms: linux/amd64,linux/arm64/v8
-          push: "${{ github.event_name != 'pull_request' }}"
-          tags: "${{ steps.meta.outputs.tags }}"
-          labels: "${{ steps.meta.outputs.labels }}"
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
+            type=local,src=/tmp/.buildx-cache
+          cache-to: |
+            type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+            type=local,dest=/tmp/.buildx-cache,mode=max
+
