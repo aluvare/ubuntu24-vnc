@@ -1,0 +1,17 @@
+version: "2.3"
+services:
+  desktop:
+    build: base/
+    restart: always
+    healthcheck:
+      interval: 10s
+      retries: 12
+      test: nc -vz 127.0.0.1 5900
+  novnc:
+    image: ghcr.io/aluvare/easy-novnc/easy-novnc
+    restart: always
+    depends_on:
+      - desktop 
+    command: --addr :8080 --host desktop --port 5900 --basic-ui --no-url-password --novnc-params "resize=remote"
+    ports:
+      - "8080:8080"
